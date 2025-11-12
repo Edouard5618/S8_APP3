@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     # ---------------- Paramètres et hyperparamètres ----------------#
     force_cpu = False           # Forcer a utiliser le cpu?
-    training = True             # Entraînement?
+    training = False             # Entraînement?
     test = True                 # Test?
     learning_curves = True      # Affichage des courbes d'entraînement?
     gen_test_images = True      # Génération images test?
@@ -26,13 +26,13 @@ if __name__ == '__main__':
     seed = 1                    # Pour répétabilité
     n_workers = 0               # Nombre de threads pour chargement des données (mettre à 0 sur Windows)
     hidden_dim = 15
-    embedding_dim = 8
+    embedding_dim = 9
     n_layers = 2
-    lr = 0.003
+    lr = 0.0015
     batch_size = 32
     teacher_forcing_ratio = 0.5
-    dropout = 0.15
-    n_epochs = 4
+    dropout = 0.12
+    n_epochs = 50
     grad_clip = 1.0
     best_model_path = 'model.pt'
     torch.manual_seed(seed)
@@ -204,7 +204,7 @@ if __name__ == '__main__':
                 ax_loss.cla()
                 ax_loss.plot(train_loss_hist, label='train loss')
                 ax_loss.plot(val_loss_hist, label='val loss')
-                ax_loss.set_title('Loss per epoch')
+                ax_loss.set_title('Loss pour chaque epoch')
                 ax_loss.set_xlabel('Epoch')
                 ax_loss.set_ylabel('Loss')
                 ax_loss.legend()
@@ -212,7 +212,7 @@ if __name__ == '__main__':
                 ax_dist.cla()
                 ax_dist.plot(train_dist_hist, label='train distance')
                 ax_dist.plot(val_dist_hist, label='val distance')
-                ax_dist.set_title('Edit distance per epoch')
+                ax_dist.set_title('Distance d\'édition pour chaque epoch')
                 ax_dist.set_xlabel('Epoch')
                 ax_dist.set_ylabel('Distance')
                 ax_dist.legend()

@@ -11,7 +11,7 @@ from models import *
 from dataset import *
 from metrics import *
 from visualization import *
-# from visualization import strip_special_tokens, visualize_attention_batch, _safe_matplotlib_call
+# from visualization import strip_special_tokens, safe_matplotlib_call
 
 
 if __name__ == '__main__':
@@ -22,18 +22,19 @@ if __name__ == '__main__':
     test = True                 # Test?
     learning_curves = True      # Affichage des courbes d'entraînement?
     gen_test_images = True      # Génération images test?
-    visualize_attention = True  # Visualisation de l'attention sur la trajectoire?
-    attention_examples = 2      # Nombre d'exemples à afficher
+    use_attention = True        # Utiliser le module d'attention?
     seed = 1                    # Pour répétabilité
     n_workers = 0               # Nombre de threads pour chargement des données (mettre à 0 sur Windows)
     hidden_dim = 15
     embedding_dim = 8
     n_layers = 2
-    lr = 0.002
+    lr = 0.003
     batch_size = 32
     teacher_forcing_ratio = 0.5
-    dropout = 0.1
-    n_epochs = 50
+    dropout = 0.15
+    n_epochs = 4
+    grad_clip = 1.0
+    best_model_path = 'model.pt'
     torch.manual_seed(seed)
 
     # ---------------- Fin Paramètres et hyperparamètres ----------------#
@@ -57,7 +58,7 @@ if __name__ == '__main__':
         'traj': 2,  # x et y
     }
     model = trajectory2seq(hidden_dim, n_layers, dataset.int2symb,
-                           dataset.symb2int, vocab_sizes, device, dropout=dropout, embedding_dim=embedding_dim)
+                           dataset.symb2int, vocab_sizes, device, dropout=dropout, embedding_dim=embedding_dim, use_attention=use_attention)
     model = model.to(device)
 
     print(model)
@@ -73,6 +74,7 @@ if __name__ == '__main__':
         val_loss_hist = []
         train_dist_hist = []
         val_dist_hist = []
+        best_val_loss = float('inf')
         fig_loss, ax_loss = plt.subplots()
         fig_dist, ax_dist = plt.subplots()
 
@@ -103,6 +105,8 @@ if __name__ == '__main__':
 
                 # Rétropropagation et optimisation
                 loss.backward()
+                if grad_clip is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()
 
                 # Distance d'édition
@@ -185,6 +189,11 @@ if __name__ == '__main__':
             val_loss_epoch = val_running_loss / len(val_loader)
             val_dist_epoch = val_dist / len(val_loader)
 
+            if val_loss_epoch < best_val_loss:
+                best_val_loss = val_loss_epoch
+                torch.save(model, best_model_path)
+                print(f"Nouveau meilleur modèle sauvegardé (val_loss={best_val_loss:.4f})")
+
             # Affichage graphique
             if learning_curves:
                 train_loss_hist.append(train_loss_epoch)
@@ -215,8 +224,6 @@ if __name__ == '__main__':
             if learning_curves:
                 safe_matplotlib_call(plt.show, block=False)
 
-        torch.save(model, 'model.pt')
-
 
 ### Testing ###
 if test:
@@ -246,7 +253,6 @@ if test:
     start_idx = test_dataset.symb2int['seq'][test_dataset.start_symbol]
     stop_idx = test_dataset.symb2int['seq'][test_dataset.stop_symbol]
     pad_idx = test_dataset.symb2int['seq'][test_dataset.pad_symbol]
-    rendered_examples = 0
 
     with torch.no_grad():
         for traj_seq, word_seq in test_loader:
@@ -254,13 +260,9 @@ if test:
             word_seq = word_seq.to(device).long()
 
             # Passage avant
-            output_logits, _, attn_weights = model(traj_seq, teacher_forcing_ratio=0.0)
+            output_logits, _, _ = model(traj_seq, teacher_forcing_ratio=0.0)
             pred_sequences = output_logits.argmax(dim=-1).cpu().tolist()
             true_sequences = word_seq.cpu().tolist()
-            traj_cpu = traj_seq.detach().cpu().numpy()
-            attn_cpu = None
-            if visualize_attention and attn_weights is not None and rendered_examples < attention_examples:
-                attn_cpu = attn_weights.detach().cpu().numpy()
 
             # Calcul de la distance d'édition
             for idx, (true_seq, pred_seq) in enumerate(zip(true_sequences, pred_sequences)):
@@ -277,20 +279,6 @@ if test:
                 if paired_len > 0:
                     true_labels.extend(true_tokens[:paired_len])
                     pred_labels.extend(pred_tokens[:paired_len])
-
-            # Visualisation de l'attention
-            if attn_cpu is not None and rendered_examples < attention_examples:
-                rendered_examples = visualize_attention_batch(
-                    traj_cpu,
-                    attn_cpu,
-                    pred_sequences,
-                    true_sequences,
-                    test_dataset,
-                    rendered_examples,
-                    attention_examples,
-                )
-                if rendered_examples >= attention_examples:
-                    attn_cpu = None
 
     avg_edit_distance = total_edit_distance / total_samples
     print(f"\nTest - Average Edit Distance: {avg_edit_distance:.4f}")

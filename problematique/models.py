@@ -2,6 +2,7 @@
 # Auteur: Jean-Samuel Lauzon et  Jonathan Vincent
 # Hivers 2021
 
+import math
 import torch
 from torch import nn
 import numpy as np
@@ -9,10 +10,10 @@ import matplotlib.pyplot as plt
 
 
 class trajectory2seq(nn.Module):
-    def __init__(self, hidden_dim, n_layers, int2symb, symb2int, dict_size, device, dropout=0.1, embedding_dim=8):
+    def __init__(self, hidden_dim, n_layers, int2symb, symb2int, dict_size, device, dropout=0.1, embedding_dim=8, use_attention=True):
         super(trajectory2seq, self).__init__()
 
-        self.use_attention = True
+        self.use_attention = use_attention
 
         # Definition des parametres
         self.hidden_dim = hidden_dim
@@ -46,20 +47,25 @@ class trajectory2seq(nn.Module):
         self.output_layer = nn.Linear(self.hidden_dim, self.dict_size["seq"])
         self.embedding = nn.Embedding(self.dict_size["seq"], self.embedding_dim)
 
+        # self.concat_fc = nn.Linear(2*hidden_dim, hidden_dim)
+
     def attentionModule(self, query, values):
         query = self.hidden_to_query(query)
-        scores = torch.bmm(values, query.transpose(1, 2))
-        weights = torch.softmax(scores, dim=1)
-        context = torch.bmm(weights.transpose(1, 2), values)
-        return context, weights.transpose(1, 2)  # context (B,1,Hidden), weights (B,457,1)
+        scale = math.sqrt(query.size(-1))
+        scores = torch.matmul(query, values.transpose(1, 2)) / scale  # Scale comme dans "Attention is all you need"
+        weights = torch.softmax(scores, dim=-1)
+        context = torch.matmul(weights, values)
+        return context, weights  # context (B,1,Hidden), weights (B,1,Seq)
 
     def forward(self, x, target_seq=None, teacher_forcing_ratio=0.0):
         batch_size = x.size(0)
 
         # Encoder
         enc_out, hidden = self.encoder_layer(x)
+        # print("Hidden shape before reshape:", hidden.shape)
         enc_out = self.encoder_to_decoder(enc_out)
         hidden = hidden.reshape(self.n_layers, 2, batch_size, self.hidden_dim).sum(dim=1)
+        # print("Hidden shape after reshape:", hidden.shape)
 
         # Decoder
         max_steps = 6  # 5 + 1 pour le <eos>
@@ -83,6 +89,10 @@ class trajectory2seq(nn.Module):
             if self.use_attention:
                 context, weights = self.attentionModule(dec_out, enc_out)
                 dec_out = dec_out + context
+
+                # Test de concatener + FC au lieu de l'addition mais moins bons résultats sur 10 epochs
+                # combined = torch.cat([dec_out, context], dim=-1)
+                # dec_out = self.concat_fc(combined)  #
                 attn_weights.append(weights)
 
             dec_out = self.dropout(dec_out)

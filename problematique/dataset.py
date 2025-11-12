@@ -69,7 +69,7 @@ class HandwrittenWords(Dataset):
             maxDataLength = max(maxDataLength, len(data[0]))
 
         # Ajout du padding et conversion en tenseurs utilisables par PyTorch
-        for i, (word, (t_seq, v_seq)) in enumerate(self.data):
+        for i, (word, (x_seq, y_seq)) in enumerate(self.data):
             word_ids = [self.symb2int['seq'][self.start_symbol]]
 
             # Conversion du mot en liste d'entiers avec stop
@@ -81,10 +81,10 @@ class HandwrittenWords(Dataset):
             wordPadLength = maxWordLength - len(word_ids)
             word_ids.extend([self.symb2int['seq'][self.pad_symbol]] * wordPadLength)
 
-            # Conversion des sequences t et v en tableau numpy
-            t_seq = np.asarray(t_seq, dtype=np.float32)
-            v_seq = np.asarray(v_seq, dtype=np.float32)
-            traj = np.stack([t_seq, v_seq], axis=-1)
+            # Conversion des sequences x et v en tableau numpy
+            x_seq = np.asarray(x_seq, dtype=np.float32)
+            y_seq = np.asarray(y_seq, dtype=np.float32)
+            traj = np.stack([x_seq, y_seq], axis=-1)
 
             # Ajout du padding à la trajectoire (dernière position répétée)
             pad_len = maxDataLength - traj.shape[0]
@@ -110,8 +110,8 @@ class HandwrittenWords(Dataset):
 
         valid_mask = ~np.all(np.isclose(traj, 0.0), axis=1)
         traj = traj[valid_mask]
-        t = traj[:, 0]
-        v = traj[:, 1]
+        x = traj[:, 0]
+        y = traj[:, 1]
 
         chars = []
         for token in word_ids:
@@ -124,8 +124,8 @@ class HandwrittenWords(Dataset):
         word = ''.join(chars)
 
         plt.figure(figsize=(6, 1.6))
-        plt.plot(t, v, linewidth=0.6)
-        plt.scatter(t, v, s=8)
+        plt.plot(x, y, linewidth=0.6)
+        plt.scatter(x, y, s=8)
         ax = plt.gca()
         ax.set_aspect('equal', adjustable='box')
         ax.axis('off')

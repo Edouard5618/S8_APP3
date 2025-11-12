@@ -11,9 +11,9 @@ class HandwrittenWords(Dataset):
 
     def __init__(self, filename):
         # Lecture du text
-        self.pad_symbol = pad_symbol = '<pad>'
-        self.start_symbol = start_symbol = '<sos>'
-        self.stop_symbol = stop_symbol = '<eos>'
+        self.pad_symbol = '<pad>'
+        self.start_symbol = '<sos>'
+        self.stop_symbol = '<eos>'
 
         self.data = dict()
         with open(filename, 'rb') as fp:
@@ -55,7 +55,6 @@ class HandwrittenWords(Dataset):
                 'z': 28
             }
         }
-        self.symb2int['traj'] = 2  # x and y coordinates
 
         # Dictionnaires d'entiers vers symboles
         self.int2symb = dict()
@@ -66,37 +65,35 @@ class HandwrittenWords(Dataset):
         maxDataLength = 0
 
         for word, data in self.data:
-            # +2 to account for <sos> and <eos>
-            maxWordLength = max(maxWordLength, len(word) + 2)
+            maxWordLength = max(maxWordLength, len(word) + 2)  # +2 (<sos>, <eos>)
             maxDataLength = max(maxDataLength, len(data[0]))
 
         # Ajout du padding et conversion en tenseurs utilisables par PyTorch
         for i, (word, (t_seq, v_seq)) in enumerate(self.data):
             word_ids = [self.symb2int['seq'][self.start_symbol]]
+
+            # Conversion du mot en liste d'entiers avec stop
             for char in word:
-                if char not in self.symb2int['seq']:
-                    raise KeyError(f"Symbole inconnu dans la séquence: {char}")
                 word_ids.append(self.symb2int['seq'][char])
             word_ids.append(self.symb2int['seq'][self.stop_symbol])
 
+            # Ajout du padding au mot
             wordPadLength = maxWordLength - len(word_ids)
             word_ids.extend([self.symb2int['seq'][self.pad_symbol]] * wordPadLength)
 
+            # Conversion des sequences t et v en tableau numpy
             t_seq = np.asarray(t_seq, dtype=np.float32)
             v_seq = np.asarray(v_seq, dtype=np.float32)
             traj = np.stack([t_seq, v_seq], axis=-1)
 
+            # Ajout du padding à la trajectoire (dernière position répétée)
             pad_len = maxDataLength - traj.shape[0]
-            if pad_len < 0:
-                raise ValueError("Séquence de trajectoire plus longue que la longueur maximale calculée")
             if pad_len > 0:
-                if traj.shape[0] == 0:
-                    pad_values = np.zeros((pad_len, traj.shape[1]), dtype=traj.dtype)
-                else:
-                    last_point = traj[-1, :]
-                    pad_values = np.repeat(last_point[None, :], pad_len, axis=0)
+                last_point = traj[-1, :]
+                pad_values = np.repeat(last_point[None, :], pad_len, axis=0)
                 traj = np.concatenate([traj, pad_values], axis=0)
 
+            # Sauvegarde des données transformées
             self.data[i] = (traj.astype(np.float32), np.asarray(word_ids, dtype=np.int64))
 
     def __len__(self):
@@ -133,7 +130,6 @@ class HandwrittenWords(Dataset):
         ax.set_aspect('equal', adjustable='box')
         ax.axis('off')
         plt.figtext(0.5, 0, f"cible: {word}", ha='center', fontsize=12)
-        plt.tight_layout(pad=0.2)
         plt.show()
 
 

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 
 class trajectory2seq(nn.Module):
-    def __init__(self, hidden_dim, n_layers, int2symb, symb2int, dict_size, device, maxlen, dropout=0.1, embedding_dim=8):
+    def __init__(self, hidden_dim, n_layers, int2symb, symb2int, dict_size, device, dropout=0.1, embedding_dim=8):
         super(trajectory2seq, self).__init__()
 
         self.use_attention = True
@@ -21,7 +21,6 @@ class trajectory2seq(nn.Module):
         self.symb2int = symb2int
         self.int2symb = int2symb
         self.dict_size = dict_size
-        self.maxlen = maxlen
         self.start_idx = self.symb2int["seq"]["<sos>"]
         self.stop_idx = self.symb2int["seq"]["<eos>"]
         self.pad_idx = self.symb2int["seq"]["<pad>"]
@@ -29,77 +28,55 @@ class trajectory2seq(nn.Module):
         self.embedding_dim = embedding_dim
 
         # Definition des couches
-        # Couches pour rnn
         self.encoder_layer = nn.GRU(
             self.dict_size["traj"],
             self.hidden_dim,
             n_layers,
             batch_first=True,
             bidirectional=True,
-        )  # traj to latent space
-        # Projection to merge both encoder directions before decoding
+        )
+        self.decoder_layer = nn.GRU(
+            self.embedding_dim,
+            self.hidden_dim,
+            n_layers,
+            batch_first=True
+        )
         self.encoder_to_decoder = nn.Linear(self.hidden_dim * 2, self.hidden_dim)
-        self.decoder_layer = nn.GRU(self.embedding_dim, self.hidden_dim, n_layers, batch_first=True)
-        # the first hidden dim for input comes from decoder and the second comes from the hidden output of the encoder
-
-        # Couches pour attention
         self.hidden_to_query = nn.Linear(self.hidden_dim, self.hidden_dim)
-
-        # Couche dense pour la sortie
         self.output_layer = nn.Linear(self.hidden_dim, self.dict_size["seq"])
         self.embedding = nn.Embedding(self.dict_size["seq"], self.embedding_dim)
 
     def attentionModule(self, query, values):
-        # Module d'attention
-
-        # Couche dense à l'entrée du module d'attention
-        query = self.hidden_to_query(query)  # (B, T, H)
-
-        # Attention
-
-        # ---------------------- Laboratoire 2 - Question 4 - Début de la section à compléter -----------------
-        # values: (B, S, H), query: (B, 1, H)
-        # Scores par produit scalaire: (B, S, 1)
-        scores = torch.bmm(values, query.transpose(1, 2))  # (B, S, T)
-        weights = torch.softmax(scores, dim=1)  # (B, S, T)
-        # Contexte: somme pondérée des valeurs -> (B, T, H)
-        context = torch.bmm(weights.transpose(1, 2), values)  # (B, T, H)
-
-        # ---------------------- Laboratoire 2 - Question 4 - Fin de la section à compléter -----------------
-
-        return context, weights.transpose(1, 2)  # context (B,T,H), weights (B,T,S)
+        query = self.hidden_to_query(query)
+        scores = torch.bmm(values, query.transpose(1, 2))
+        weights = torch.softmax(scores, dim=1)
+        context = torch.bmm(weights.transpose(1, 2), values)
+        return context, weights.transpose(1, 2)  # context (B,1,Hidden), weights (B,457,1)
 
     def forward(self, x, target_seq=None, teacher_forcing_ratio=0.0):
         batch_size = x.size(0)
 
-        # encoder
+        # Encoder
         enc_out, hidden = self.encoder_layer(x)
-
-        # Merge the bidirectional outputs to match decoder dimensionality
         enc_out = self.encoder_to_decoder(enc_out)
         hidden = hidden.reshape(self.n_layers, 2, batch_size, self.hidden_dim).sum(dim=1)
 
-        # decoder
-        if target_seq is not None:
-            max_steps = max(0, target_seq.size(1) - 1)
-        else:
-            max_steps = self.maxlen
-
-        if max_steps == 0:
-            self.last_attention_weights = None
-            return torch.empty(batch_size, 0, self.dict_size["seq"], device=x.device), hidden
+        # Decoder
+        max_steps = 6  # 5 + 1 pour le <eos>
 
         decoder_input_tokens = (
-            target_seq[:, 0]
+            target_seq[:, 0]  # At training
             if target_seq is not None
-            else torch.full((batch_size,), self.start_idx, device=x.device, dtype=torch.long)
+            else torch.full((batch_size,), self.start_idx, device=x.device, dtype=torch.long)  # At inference
         )
         decoder_input = self.embedding(decoder_input_tokens).unsqueeze(1)
 
+        # Initialisation
         outputs = []
         attn_weights = []
         terminated = torch.zeros(batch_size, dtype=torch.bool, device=x.device)
 
+        # Pour tous les tokens
         for t in range(max_steps):
             dec_out, hidden = self.decoder_layer(decoder_input, hidden)
 
@@ -108,7 +85,7 @@ class trajectory2seq(nn.Module):
                 dec_out = dec_out + context
                 attn_weights.append(weights)
 
-            dec_out = self.dropout(dec_out)  # regularize decoder hidden state
+            dec_out = self.dropout(dec_out)
 
             step_logits = self.output_layer(dec_out)
             outputs.append(step_logits)
@@ -118,6 +95,7 @@ class trajectory2seq(nn.Module):
 
             next_tokens = step_logits.argmax(dim=-1).squeeze(1)
 
+            # Application du teacher forcing
             if target_seq is not None and teacher_forcing_ratio > 0.0:
                 tf_mask = torch.rand(batch_size, device=x.device) < teacher_forcing_ratio
                 if tf_mask.any():
@@ -136,9 +114,9 @@ class trajectory2seq(nn.Module):
 
         logits = torch.cat(outputs, dim=1)
 
-        if self.use_attention and attn_weights:
-            self.last_attention_weights = torch.cat(attn_weights, dim=1)
+        if attn_weights:
+            attn_tensor = torch.cat(attn_weights, dim=1)
         else:
-            self.last_attention_weights = None
+            attn_tensor = None
 
-        return logits, hidden
+        return logits, hidden, attn_tensor

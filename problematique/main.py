@@ -11,14 +11,16 @@ from models import *
 from dataset import *
 from metrics import *
 from visualization import *
-# from visualization import strip_special_tokens, safe_matplotlib_call
+
+# Salut à toi qui corrige! Pour ton information: le mode training est présentement désactivé par défaut et
+# le mode test utilise le modèle "model500epoch.pt".
 
 
 if __name__ == '__main__':
 
     # ---------------- Paramètres et hyperparamètres ----------------#
     force_cpu = False           # Forcer a utiliser le cpu?
-    training = False             # Entraînement?
+    training = False            # Entraînement?
     test = True                 # Test?
     learning_curves = True      # Affichage des courbes d'entraînement?
     gen_test_images = True      # Génération images test?
@@ -231,7 +233,7 @@ if test:
 
     # Load a trained model only if we are not training now
     if not training:
-        model_path = 'model.pt'
+        model_path = 'model500epoch.pt'
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Impossible de charger le modèle entraîné: {model_path}")
 
@@ -254,13 +256,18 @@ if test:
     stop_idx = test_dataset.symb2int['seq'][test_dataset.stop_symbol]
     pad_idx = test_dataset.symb2int['seq'][test_dataset.pad_symbol]
 
+    example_limit = 8
+    example_pairs = []
+    attention_examples = 4 if use_attention and gen_test_images else 0
+    rendered_attention = 0
+
     with torch.no_grad():
         for traj_seq, word_seq in test_loader:
             traj_seq = traj_seq.to(device).float()
             word_seq = word_seq.to(device).long()
 
             # Passage avant
-            output_logits, _, _ = model(traj_seq, teacher_forcing_ratio=0.0)
+            output_logits, _, attn_weights = model(traj_seq, teacher_forcing_ratio=0.0)
             pred_sequences = output_logits.argmax(dim=-1).cpu().tolist()
             true_sequences = word_seq.cpu().tolist()
 
@@ -280,12 +287,36 @@ if test:
                     true_labels.extend(true_tokens[:paired_len])
                     pred_labels.extend(pred_tokens[:paired_len])
 
+                if len(example_pairs) < example_limit:
+                    true_word = ''.join(test_dataset.int2symb['seq'].get(tok, '?') for tok in true_tokens)
+                    pred_word = ''.join(test_dataset.int2symb['seq'].get(tok, '?') for tok in pred_tokens)
+                    pair_distance = edit_distance(true_tokens, pred_tokens)
+                    example_pairs.append((true_word, pred_word, pair_distance))
+
+            if attention_examples and attn_weights is not None and rendered_attention < attention_examples:
+                attn_np = attn_weights.detach().cpu().numpy()
+                traj_np = traj_seq.detach().cpu().numpy()
+                rendered_attention = visualize_attention_batch(
+                    traj_np,
+                    attn_np,
+                    pred_sequences,
+                    true_sequences,
+                    test_dataset,
+                    rendered_attention,
+                    attention_examples
+                )
+
     avg_edit_distance = total_edit_distance / total_samples
     print(f"\nTest - Average Edit Distance: {avg_edit_distance:.4f}")
 
     if missing_characters or extra_characters:
         print(f"Test - Caractères manquants (séquence prédite trop courte): {missing_characters}")
         print(f"Test - Caractères supplémentaires (séquence prédite trop longue): {extra_characters}")
+
+    if example_pairs:
+        print("\nExemples de prédictions (ensemble de test):")
+        for target, predicted, dist in example_pairs:
+            print(f"  Word: {target}  - Predicted: {predicted}  (distance: {dist})")
 
     conf_mat, class_indices = confusion_matrix(true_labels, pred_labels, ignore=[start_idx, stop_idx, pad_idx])
     class_labels = [test_dataset.int2symb['seq'].get(idx, str(idx)) for idx in class_indices]
